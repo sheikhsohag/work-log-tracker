@@ -1,0 +1,15 @@
+{
+  "name": "worklog-tracker",
+  "version": "1.0.0",
+  "description": "Daily task manager + productive time tracker with end-of-day Work Report (Node + SQLite)",
+  "type": "commonjs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "node server.js"
+  },
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "express": "^4.21.2"
+  }
+}

@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Worklog Tracker</title>
+<link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand"><span class="dot"></span> Worklog Tracker</div>
+    <div class="tools">
+      <input type="date" id="datePick" />
+      <button class="btn" id="historyBtn">🗂 History</button>
+      <button class="btn primary" id="reportBtn">📄 Work Report</button>
+      <button class="btn ghost" id="themeBtn" title="Theme">🌗</button>
+    </div>
+  </header>
+
+  <!-- live focus banner -->
+  <div class="focus" id="focus">
+    <div class="f-left">
+      <span class="pulse"></span>
+      <div>
+        <div class="f-label">Now working</div>
+        <div class="f-title" id="focusTitle">Kono task chalu nei</div>
+      </div>
+    </div>
+    <div class="f-clock" id="focusClock">00:00:00</div>
+  </div>
+
+  <!-- sign in / out (defines the day's total time span) -->
+  <section class="signbar" id="signbar">
+    <button class="btn sign-in" id="signInBtn">🟢 Sign In</button>
+    <button class="btn sign-out" id="signOutBtn">🔴 Sign Out</button>
+    <button class="btn" id="signEditBtn" title="Edit sign-in / sign-out time">✎ Edit time</button>
+    <div class="sign-info" id="signInfo">Not signed in</div>
+  </section>
+
+  <!-- breaks (deducted from total → net working time) -->
+  <section class="breakbar" id="breakbar">
+    <span class="break-dot"></span>
+    <button class="btn break-start" id="breakStartBtn">☕ Start Break</button>
+    <button class="btn break-end" id="breakEndBtn">✅ End Break</button>
+    <div class="break-info" id="breakInfo">No breaks yet</div>
+  </section>
+
+  <!-- stats -->
+  <section class="stats" id="stats"></section>
+
+  <!-- add task -->
+  <section class="addbar">
+    <input id="newTitle" class="grow" placeholder="Notun task… (Enter e add)" />
+    <select id="newPrio">
+      <option value="high">High</option>
+      <option value="med" selected>Medium</option>
+      <option value="low">Low</option>
+    </select>
+    <select id="newStatus">
+      <option value="in_progress">In Progress</option>
+      <option value="pending">Pending</option>
+      <option value="hold">Hold</option>
+      <option value="completed">Completed</option>
+    </select>
+    <select id="newCat" title="Category">
+      <option value="task">Task</option>
+      <option value="other">Other (meeting/guide)</option>
+    </select>
+    <input id="newEst" class="est" type="number" min="0" step="5" placeholder="est min" title="Estimated minutes" />
+    <button class="btn primary" id="addBtn">+ Add</button>
+  </section>
+
+  <!-- board: 3 status groups -->
+  <section class="groups">
+    <div class="group" data-status="in_progress">
+      <div class="g-head"><span class="g-emoji">🔄</span> Running / In Progress <span class="g-count" id="cnt-in_progress">0</span></div>
+      <div class="g-body" id="col-in_progress"></div>
+    </div>
+    <div class="group" data-status="pending">
+      <div class="g-head"><span class="g-emoji">⏳</span> Pending <span class="g-count" id="cnt-pending">0</span></div>
+      <div class="g-body" id="col-pending"></div>
+    </div>
+    <div class="group" data-status="hold">
+      <div class="g-head"><span class="g-emoji">⏸</span> Hold <span class="g-count" id="cnt-hold">0</span></div>
+      <div class="g-body" id="col-hold"></div>
+    </div>
+    <div class="group" data-status="completed">
+      <div class="g-head"><span class="g-emoji">✅</span> Completed <span class="g-count" id="cnt-completed">0</span></div>
+      <div class="g-body" id="col-completed"></div>
+    </div>
+  </section>
+
+  <!-- planning + note -->
+  <section class="panels">
+    <div class="panel">
+      <div class="p-head">⏱ Estimated Work Duration</div>
+      <div class="p-body grid2">
+        <label>Estimated Time Required<input id="m_est_time_required" /></label>
+        <label>Starting Time<input id="m_starting_time" /></label>
+        <label>Estimated Completion<input id="m_est_completion" /></label>
+        <label>Estimated Ending Date<input id="m_est_ending_date" /></label>
+        <label>Others label<input id="m_others_label" placeholder="Others meeting + guide" /></label>
+        <label>Others minutes<input id="m_others_minutes" type="number" min="0" step="5" placeholder="30" /></label>
+      </div>
+      <div class="p-foot"><span class="saved" id="metaSaved"></span></div>
+    </div>
+    <div class="panel">
+      <div class="p-head">📝 Daily Note</div>
+      <div class="p-body">
+        <textarea id="dailyNote" placeholder="Aajker plan, reminders, blockers…"></textarea>
+      </div>
+      <div class="p-foot"><span class="saved" id="noteSaved"></span></div>
+    </div>
+  </section>
+
+  <p class="hint">Card drag korle upore/niche move ba onno group-e reassign hoy · Ekbar-e ekta timer chole (focus mode) · Sob data SQLite-e save</p>
+</div>
+
+<!-- history modal -->
+<div class="overlay" id="histOverlay">
+  <div class="modal hist">
+    <h3>🗂 History <span class="muted" id="histRange"></span></h3>
+    <div class="hist-tools">
+      <label>From <input type="date" id="histFrom" /></label>
+      <label>To <input type="date" id="histTo" /></label>
+      <button class="btn" id="histApply">Apply</button>
+      <button class="btn ghost" id="histClear">All dates</button>
+      <label class="hist-status">Status
+        <select id="histStatusSel">
+          <option value="all" selected>All</option>
+          <option value="in_progress">🔄 In Progress</option>
+          <option value="pending">⏳ Pending</option>
+          <option value="hold">⏸ Hold</option>
+          <option value="completed">✅ Completed</option>
+        </select>
+      </label>
+    </div>
+    <div class="hist-body" id="histBody"></div>
+    <div class="foot">
+      <button class="btn ghost" id="hClose">Close</button>
+      <span class="muted" id="histSummary"></span>
+    </div>
+  </div>
+</div>
+
+<!-- report modal -->
+<div class="overlay" id="overlay">
+  <div class="modal">
+    <h3>📄 Work Report <span id="reportDate" class="muted"></span></h3>
+    <pre id="reportText" class="report"></pre>
+    <div class="foot">
+      <button class="btn ghost" id="rClose">Close</button>
+      <div class="right">
+        <button class="btn" id="rDownload">⬇ Download .txt</button>
+        <button class="btn primary" id="rCopy">📋 Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- task details modal -->
+<div class="overlay" id="detailOverlay">
+  <div class="modal">
+    <h3>🔍 Task Details <span id="detailDate" class="muted"></span></h3>
+    <div id="detailBody" class="detail-body"></div>
+    <div class="foot">
+      <button class="btn ghost" id="dClose">Close</button>
+      <div class="right">
+        <button class="btn" id="dEdit">✏ Edit</button>
+        <button class="btn" id="dExport">⬇ Export .txt</button>
+        <button class="btn primary" id="dCopy">📋 Copy</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- task edit modal (edit everything) -->
+<div class="overlay" id="editOverlay">
+  <div class="modal">
+    <h3>✏ Edit Task</h3>
+    <div class="edit-form">
+      <label class="full">Title<input id="e_title" /></label>
+      <label class="full">Description<textarea id="e_description" rows="3"></textarea></label>
+      <div class="grid2">
+        <label>Priority
+          <select id="e_priority"><option value="high">High</option><option value="med">Medium</option><option value="low">Low</option></select>
+        </label>
+        <label>Status
+          <select id="e_status"><option value="in_progress">🔄 In Progress</option><option value="pending">⏳ Pending</option><option value="hold">⏸ Hold</option><option value="completed">✅ Completed</option></select>
+        </label>
+        <label>Category
+          <select id="e_category"><option value="task">Task</option><option value="other">Other (meeting/guide)</option></select>
+        </label>
+        <label>Estimated minutes<input id="e_est_minutes" type="number" min="0" step="5" /></label>
+      </div>
+      <label class="full">Note / Pending reason<input id="e_note" placeholder="e.g. awaiting for html clearance" /></label>
+    </div>
+    <div class="foot">
+      <button class="btn ghost" id="edClose">Cancel</button>
+      <div class="right">
+        <button class="btn danger" id="edDelete">🗑 Delete</button>
+        <button class="btn primary" id="edSave">💾 Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- sticky notes: right-edge chevron toggle + sliding sidebar / full-screen board -->
+<button class="side-tab" id="stickyTab" title="Sticky notes" aria-label="Toggle notes">❯</button>
+<div class="sticky-board" id="stickyBoard">
+  <div class="sb-grip" id="sbGrip" title="Drag to resize panel"></div>
+  <div class="sb-bar" id="sbBar">
+    <div class="sb-title">🗒 Sticky Notes <span class="muted" id="sbCount"></span></div>
+    <div class="sb-tools">
+      <button class="btn" id="sbAdd">+ New note</button>
+      <button class="btn" id="sbTidy" title="Arrange notes into a grid">▦ Tidy</button>
+      <button class="btn ghost" id="sbFull" title="Fullscreen">⤢</button>
+      <button class="btn ghost" id="sbCollapse" title="Collapse">–</button>
+      <button class="btn ghost" id="sbClose" title="Close">✕</button>
+    </div>
+  </div>
+  <div class="sb-canvas" id="sbCanvas"></div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
