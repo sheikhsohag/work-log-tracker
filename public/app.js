@@ -76,8 +76,11 @@
     return pad2(Math.floor(mins / 60)) + ":" + pad2(mins % 60);
   };
   function renderSign() {
-    const info = $("signInfo"), inBtn = $("signInBtn"), outBtn = $("signOutBtn");
+    const info = $("signInfo"), inBtn = $("signInBtn"), outBtn = $("signOutBtn"), bar = $("signbar");
     outBtn.disabled = !signInAt || !!signOutAt;
+    // signed in and not yet signed out → "working": animated border on the sign bar
+    bar.classList.toggle("working", !!signInAt && !signOutAt);
+    bar.classList.toggle("done", !!signInAt && !!signOutAt);
     if (!signInAt) { info.textContent = "Not signed in"; return; }
     info.textContent = signOutAt
       ? `In ${hhmm(signInAt)} · Out ${hhmm(signOutAt)} · total ${spanClock()}`
