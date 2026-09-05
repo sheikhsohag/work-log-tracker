@@ -36,5 +36,6 @@ desktop.ini
 # Build / temp
 dist/
 build/
+release/
 tmp/
 *.tmp
