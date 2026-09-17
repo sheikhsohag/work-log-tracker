@@ -43,7 +43,20 @@
     <span class="break-dot"></span>
     <button class="btn break-start" id="breakStartBtn">☕ Start Break</button>
     <button class="btn break-end" id="breakEndBtn">✅ End Break</button>
+    <button class="btn ghost" id="breakEditBtn" title="View / edit today’s breaks">✎ Edit</button>
     <div class="break-info" id="breakInfo">No breaks yet</div>
+    <!-- per-break editor: title + start/end + delete for each of the day's breaks -->
+    <div class="break-list" id="breakList" hidden></div>
+    <!-- quick-pick titles (Breakfast / Tea / Lunch) + a custom one; a day can have many breaks -->
+    <div class="break-picker" id="breakPicker" hidden>
+      <span class="break-picker-label">Break title:</span>
+      <button class="chip" data-break="Breakfast">🍳 Breakfast</button>
+      <button class="chip" data-break="Tea">🍵 Tea</button>
+      <button class="chip" data-break="Lunch">🍱 Lunch</button>
+      <input id="breakTitleInput" type="text" placeholder="Custom title…" maxlength="40" />
+      <button class="btn primary" id="breakPickStart">Start</button>
+      <button class="btn ghost" id="breakPickCancel">✕</button>
+    </div>
   </section>
 
   <!-- stats -->

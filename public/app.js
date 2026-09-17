@@ -16,6 +16,8 @@
   let tasks = [];
   let signInAt = null, signOutAt = null;   // epoch ms for the day's total-time span
   let breakClosedMs = 0, breakRunningSince = null;   // day's break time (deducted from total)
+  let breakRunningNote = "";                          // title of the break currently in progress
+  let breakSpansRaw = [];                             // this day's raw break rows (for the editor list)
   const dispSec = (t) => (t.closed_seconds || 0) + (t.running ? (Date.now() - t.running_since) / 1000 : 0);
   const breakMs = () => breakClosedMs + (breakRunningSince ? Date.now() - breakRunningSince : 0);
 
@@ -55,17 +57,19 @@
     // break state is non-fatal: if the endpoint is missing (server not restarted
     // after an update) don't let it block the task board from rendering.
     try { applyBreakState(await api("/api/breaks?date=" + date)); }
-    catch { breakClosedMs = 0; breakRunningSince = null; }
+    catch { breakClosedMs = 0; breakRunningSince = null; breakSpansRaw = []; }
     renderSign();
     renderBreak();
+    renderBreakList();
     render();
   }
 
   // pull closed-break ms out of the raw spans so the running span can tick live
   function applyBreakState(bs) {
-    const spans = (bs && bs.breaks) || [];
-    breakClosedMs = spans.reduce((s, b) => s + (b.ended_at != null ? b.ended_at - b.started_at : 0), 0);
+    breakSpansRaw = (bs && bs.breaks) || [];
+    breakClosedMs = breakSpansRaw.reduce((s, b) => s + (b.ended_at != null ? b.ended_at - b.started_at : 0), 0);
     breakRunningSince = (bs && bs.running_since) || null;
+    breakRunningNote = (bs && bs.running_note) || "";
   }
 
   /* ---------- sign in / out ---------- */
@@ -136,18 +140,111 @@
     bar.classList.toggle("on-break", onBreak);
     startBtn.disabled = onBreak;
     endBtn.disabled = !onBreak;
-    if (onBreak) info.textContent = `on break… ${breakClock()}  ·  today ${hm(breakMs() / 1000)}`;
+    if (onBreak) {
+      const label = breakRunningNote ? `${breakRunningNote} · ` : "";
+      info.textContent = `${label}on break… ${breakClock()}  ·  today ${hm(breakMs() / 1000)}`;
+    }
     else if (breakClosedMs > 0) info.textContent = `today’s breaks: ${breakClock()}`;
     else info.textContent = "No breaks yet";
   }
-  $("breakStartBtn").onclick = async () => {
-    applyBreakState(await api("/api/break/start?date=" + date, { method: "POST" }));
+
+  const breakPicker = $("breakPicker");
+  const closePicker = () => { breakPicker.hidden = true; };
+  // Post a break with the given title, then refresh (a running task was auto-held).
+  async function startBreakWith(note) {
+    closePicker();
+    applyBreakState(await api("/api/break/start?date=" + date, {
+      method: "POST", body: JSON.stringify({ note: note || "" }),
+    }));
     renderBreak();
     load();   // a running task was auto-held → refresh cards
+  }
+  // Start Break opens the title picker (Breakfast / Tea / Lunch / custom).
+  $("breakStartBtn").onclick = () => {
+    breakPicker.hidden = !breakPicker.hidden;
+    if (!breakPicker.hidden) { const i = $("breakTitleInput"); i.value = ""; i.focus(); }
   };
+  breakPicker.querySelectorAll("[data-break]").forEach((b) => {
+    b.onclick = () => startBreakWith(b.getAttribute("data-break"));
+  });
+  $("breakPickStart").onclick = () => startBreakWith($("breakTitleInput").value.trim());
+  $("breakTitleInput").onkeydown = (e) => {
+    if (e.key === "Enter") { e.preventDefault(); $("breakPickStart").click(); }
+    else if (e.key === "Escape") closePicker();
+  };
+  $("breakPickCancel").onclick = closePicker;
   $("breakEndBtn").onclick = async () => {
     applyBreakState(await api("/api/break/end?date=" + date, { method: "POST" }));
-    renderBreak();
+    renderBreak(); renderBreakList();
+  };
+
+  /* ---------- break editor (title / times / delete per break) ---------- */
+  const breakList = $("breakList");
+  // Render the day's breaks as editable rows. No-op while the panel is hidden.
+  function renderBreakList() {
+    if (breakList.hidden) return;
+    if (!breakSpansRaw.length) { breakList.innerHTML = `<div class="break-empty">No breaks yet today.</div>`; return; }
+    breakList.innerHTML = breakSpansRaw.map((b, i) => {
+      const open = b.ended_at == null;
+      const durSec = ((open ? Date.now() : b.ended_at) - b.started_at) / 1000;
+      const title = b.note ? esc(b.note) : `<span class="muted">Untitled</span>`;
+      const times = `${hhmm(b.started_at)} → ${open ? "…" : hhmm(b.ended_at)}`;
+      return `<div class="break-row">
+        <span class="break-row-idx">${i + 1}.</span>
+        <span class="break-row-title">${title}</span>
+        <span class="break-row-time">${times} · ${hm(durSec)}${open ? " · running" : ""}</span>
+        <button class="break-mini" data-edit="${b.id}" title="Edit">✎</button>
+        <button class="break-mini" data-del="${b.id}" title="Delete">🗑</button>
+      </div>`;
+    }).join("");
+    breakList.querySelectorAll("[data-edit]").forEach((el) => { el.onclick = () => editBreak(Number(el.dataset.edit)); });
+    breakList.querySelectorAll("[data-del]").forEach((el) => { el.onclick = () => deleteBreakEntry(Number(el.dataset.del)); });
+  }
+  // Edit one break's title + start/end (HH:MM), same prompt style as sign-time edit.
+  async function editBreak(id) {
+    const b = breakSpansRaw.find((x) => x.id === id);
+    if (!b) return;
+    const title = prompt("Break title (e.g. Lunch, Tea, Breakfast). Empty = untitled.", b.note || "");
+    if (title === null) return;
+    const inStr = prompt("Start time (HH:MM).", hhmm(b.started_at));
+    if (inStr === null) return;
+    const startMs = parseHM(inStr);
+    if (startMs == null) return alert("Time bujhte parlam na: " + inStr + "\n(HH:MM format e dao, jemon 13:00)");
+    const wasOpen = b.ended_at == null;
+    const outStr = prompt("End time (HH:MM).  Empty = still on break (open).", wasOpen ? "" : hhmm(b.ended_at));
+    if (outStr === null) return;
+    const start = dayStartMs(date);
+    const body = { note: title.trim(), started_at: start + startMs };
+    if (outStr.trim() === "") body.ended_at = null;
+    else {
+      const endMs = parseHM(outStr);
+      if (endMs == null) return alert("Time bujhte parlam na: " + outStr + "\n(HH:MM format e dao, jemon 13:45)");
+      body.ended_at = start + endMs;
+      if (body.ended_at < body.started_at) return alert("End time start time-er age hote pare na.");
+    }
+    try {
+      applyBreakState(await api("/api/break/" + id, { method: "PUT", body: JSON.stringify(body) }));
+      renderBreak(); renderBreakList(); renderStats();
+    } catch (err) {
+      alert("Save hoyni: " + (err && err.message ? err.message : err) +
+        "\n\nServer ta restart korte hobe (npm start) — notun /api/break/:id route lagbe.");
+    }
+  }
+  async function deleteBreakEntry(id) {
+    const b = breakSpansRaw.find((x) => x.id === id);
+    const label = b && b.note ? `"${b.note}" break` : "this break";
+    if (!confirm(`Delete ${label}?`)) return;
+    try {
+      applyBreakState(await api("/api/break/" + id, { method: "DELETE" }));
+      renderBreak(); renderBreakList(); renderStats();
+    } catch (err) {
+      alert("Delete hoyni: " + (err && err.message ? err.message : err) +
+        "\n\nServer ta restart korte hobe (npm start).");
+    }
+  }
+  $("breakEditBtn").onclick = () => {
+    breakList.hidden = !breakList.hidden;
+    if (!breakList.hidden) { closePicker(); renderBreakList(); }
   };
 
   /* ---------- render ---------- */
@@ -435,6 +532,7 @@
       const bstat = $("breakStat");
       if (bstat) bstat.textContent = hm(breakMs() / 1000);
       renderBreak();
+      if (!breakList.hidden) renderBreakList();   // keep the open editor's running row fresh
     }
   }
   setInterval(tick, 1000);

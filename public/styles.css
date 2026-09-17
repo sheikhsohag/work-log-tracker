@@ -76,6 +76,24 @@ html[data-theme="dark"] .signbar.working .btn.sign-in{animation:signPulseDark 1.
 .break-dot{display:none;width:10px;height:10px;border-radius:50%;background:var(--md)}
 .breakbar.on-break .break-dot{display:inline-block;animation:pulse-break 1.2s infinite}
 @keyframes pulse-break{0%{box-shadow:0 0 0 0 rgba(245,158,11,.5)}70%{box-shadow:0 0 0 9px rgba(245,158,11,0)}100%{box-shadow:0 0 0 0 rgba(245,158,11,0)}}
+/* break title picker (Breakfast / Tea / Lunch / custom) — wraps to its own row */
+.break-picker{display:flex;align-items:center;gap:6px;flex-wrap:wrap;flex-basis:100%;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line)}
+.break-picker[hidden]{display:none}
+.break-picker-label{font-size:12px;font-weight:700;color:var(--muted)}
+.break-picker .chip{border:1px solid var(--line);background:var(--panel);border-radius:999px;padding:5px 11px;cursor:pointer;font-size:13px;font-weight:700;transition:.15s}
+.break-picker .chip:hover{border-color:var(--md);color:var(--md);transform:translateY(-1px)}
+.break-picker input{flex:1;min-width:130px;padding:6px 10px}
+/* per-break editor list (title · times · edit/delete), wraps to its own row */
+.break-list{display:flex;flex-direction:column;gap:3px;flex-basis:100%;margin-top:4px;padding-top:8px;border-top:1px dashed var(--line)}
+.break-list[hidden]{display:none}
+.break-empty{font-size:13px;color:var(--muted);padding:2px 4px}
+.break-row{display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 6px;border-radius:8px}
+.break-row:hover{background:var(--md-bg)}
+.break-row-idx{color:var(--muted);font-weight:700}
+.break-row-title{font-weight:700;min-width:80px}
+.break-row-time{color:var(--muted);font-variant-numeric:tabular-nums;margin-right:auto}
+.break-mini{border:1px solid var(--line);background:var(--panel);border-radius:8px;padding:3px 8px;cursor:pointer;font-size:12px;line-height:1}
+.break-mini:hover{border-color:var(--md);color:var(--md)}
 
 /* stats */
 .stats{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px}

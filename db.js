@@ -30,7 +30,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   day          TEXT NOT NULL,               -- YYYY-MM-DD
   position     INTEGER DEFAULT 0,
   created_at   INTEGER,
-  completed_at INTEGER
+  completed_at INTEGER,
+  updated_at   INTEGER                       -- epoch ms of the last meaningful change (edit / status / timer)
 );
 
 CREATE TABLE IF NOT EXISTS sessions (
@@ -99,14 +100,27 @@ CREATE INDEX IF NOT EXISTS idx_breaks_day ON breaks(day);
   // can total the time a multi-day task took across all its days. NULL = this row
   // IS the origin (its chain id is its own id, via COALESCE(origin_id, id)).
   if (!cols.includes("origin_id")) db.exec("ALTER TABLE tasks ADD COLUMN origin_id INTEGER");
+  // updated_at drives the board's "most-recently-touched first" ordering. Backfill
+  // existing rows from completed_at (falling back to created_at) so pre-migration
+  // tasks get a sensible initial timestamp instead of sorting to the bottom.
+  if (!cols.includes("updated_at")) {
+    db.exec("ALTER TABLE tasks ADD COLUMN updated_at INTEGER");
+    db.exec("UPDATE tasks SET updated_at = COALESCE(completed_at, created_at) WHERE updated_at IS NULL");
+  }
 }
 
 const now = () => Date.now();
 
+// SQL fragment that stamps updated_at with the current epoch-ms (SQLite's UTC clock
+// converted to Unix ms, matching Date.now()). Used by every mutation that counts as
+// "touching" a task, so the board can order most-recently-changed first. Pure
+// position changes (drag reorder) deliberately DON'T use this — see setPosStatus.
+const TOUCH = `updated_at = CAST((julianday('now') - 2440587.5) * 86400000 AS INTEGER)`;
+
 /* ---------- statements ---------- */
 const S = {
-  insertTask: db.prepare(`INSERT INTO tasks (title,description,priority,status,category,est_minutes,note,day,position,created_at)
-                          VALUES (@title,@description,@priority,@status,@category,@est_minutes,@note,@day,@position,@created_at)`),
+  insertTask: db.prepare(`INSERT INTO tasks (title,description,priority,status,category,est_minutes,note,day,position,created_at,updated_at)
+                          VALUES (@title,@description,@priority,@status,@category,@est_minutes,@note,@day,@position,@created_at,@created_at)`),
   // closed_ms / running_since are scoped to [@start,@end) — the viewed day only —
   // so a card shows just THIS day's tracked time, not the task's all-days total.
   // (A session belongs to the day it was started on.)
@@ -120,8 +134,7 @@ const S = {
            AND s.started_at >= @start AND s.started_at < @end LIMIT 1) AS running_since
     FROM tasks t
     WHERE t.day=@day
-    ORDER BY CASE t.status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 WHEN 'hold' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,
-             t.position ASC, t.id ASC`),
+    ORDER BY t.updated_at DESC, t.id DESC`),
   // every task across all days (optional YYYY-MM-DD from/to range) — powers History
   listAll: db.prepare(`
     SELECT t.*,
@@ -129,9 +142,7 @@ const S = {
       (SELECT started_at FROM sessions s WHERE s.task_id=t.id AND s.ended_at IS NULL LIMIT 1) AS running_since
     FROM tasks t
     WHERE (@from IS NULL OR t.day >= @from) AND (@to IS NULL OR t.day <= @to)
-    ORDER BY t.day DESC,
-             CASE t.status WHEN 'in_progress' THEN 0 WHEN 'pending' THEN 1 WHEN 'hold' THEN 2 WHEN 'completed' THEN 3 ELSE 4 END,
-             t.position ASC, t.id ASC`),
+    ORDER BY t.day DESC, t.updated_at DESC, t.id DESC`),
   getTask: db.prepare(`SELECT * FROM tasks WHERE id=?`),
   // one task with its time day-scoped to [@start,@end) — powers the details view.
   taskByIdScoped: db.prepare(`
@@ -145,9 +156,10 @@ const S = {
     FROM tasks t WHERE t.id=@id`),
   sessionsByTask: db.prepare(`SELECT started_at, ended_at FROM sessions WHERE task_id=? ORDER BY started_at ASC`),
   updateTask: db.prepare(`UPDATE tasks SET title=@title, description=@description, priority=@priority,
-                          status=@status, category=@category, est_minutes=@est_minutes, note=@note WHERE id=@id`),
-  setStatus: db.prepare(`UPDATE tasks SET status=@status, work_state=@work_state, completed_at=@completed_at WHERE id=@id`),
-  setWorkState: db.prepare(`UPDATE tasks SET work_state=@work_state WHERE id=@id`),
+                          status=@status, category=@category, est_minutes=@est_minutes, note=@note, ${TOUCH} WHERE id=@id`),
+  setStatus: db.prepare(`UPDATE tasks SET status=@status, work_state=@work_state, completed_at=@completed_at, ${TOUCH} WHERE id=@id`),
+  setWorkState: db.prepare(`UPDATE tasks SET work_state=@work_state, ${TOUCH} WHERE id=@id`),
+  // pure drag reorder — deliberately does NOT touch updated_at (see TOUCH note).
   setPosStatus: db.prepare(`UPDATE tasks SET position=@position, status=@status WHERE id=@id`),
   deleteTask: db.prepare(`DELETE FROM tasks WHERE id=?`),
   maxPos: db.prepare(`SELECT COALESCE(MAX(position),-1)+1 AS p FROM tasks WHERE day=? AND status=?`),
@@ -166,10 +178,10 @@ const S = {
   // snapshot copy of an unfinished task onto a new day: fresh timer (no sessions,
   // adjust reset), linked to the origin chain. The source row stays put, frozen.
   insertCopy: db.prepare(`
-    INSERT INTO tasks (title,description,priority,status,work_state,note,category,est_minutes,origin_id,day,position,created_at,completed_at,adjust_ms)
-    VALUES (@title,@description,@priority,@status,@work_state,@note,@category,@est_minutes,@origin_id,@day,@position,@created_at,NULL,0)`),
+    INSERT INTO tasks (title,description,priority,status,work_state,note,category,est_minutes,origin_id,day,position,created_at,updated_at,completed_at,adjust_ms)
+    VALUES (@title,@description,@priority,@status,@work_state,@note,@category,@est_minutes,@origin_id,@day,@position,@created_at,@created_at,NULL,0)`),
 
-  setAdjust: db.prepare(`UPDATE tasks SET adjust_ms=@adjust_ms WHERE id=@id`),
+  setAdjust: db.prepare(`UPDATE tasks SET adjust_ms=@adjust_ms, ${TOUCH} WHERE id=@id`),
   // total tracked ms from sessions (closed + any still-running span, up to @now)
   taskSessionMs: db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN ended_at IS NOT NULL THEN ended_at-started_at
@@ -199,10 +211,13 @@ const S = {
     SELECT COALESCE(origin_id,id) AS chain, COALESCE(SUM(adjust_ms),0) AS adj, COUNT(*) AS n, MAX(day) AS last_day
     FROM tasks GROUP BY COALESCE(origin_id,id)`),
 
-  openBreak: db.prepare(`INSERT INTO breaks (day, started_at) VALUES (?, ?)`),
+  openBreak: db.prepare(`INSERT INTO breaks (day, started_at, note) VALUES (?, ?, ?)`),
   closeOpenBreak: db.prepare(`UPDATE breaks SET ended_at=? WHERE day=? AND ended_at IS NULL`),
   runningBreak: db.prepare(`SELECT * FROM breaks WHERE day=? AND ended_at IS NULL ORDER BY started_at DESC LIMIT 1`),
-  breaksByDay: db.prepare(`SELECT started_at, ended_at FROM breaks WHERE day=? ORDER BY started_at ASC`),
+  breaksByDay: db.prepare(`SELECT id, started_at, ended_at, note FROM breaks WHERE day=? ORDER BY started_at ASC`),
+  getBreak: db.prepare(`SELECT * FROM breaks WHERE id=?`),
+  updateBreak: db.prepare(`UPDATE breaks SET started_at=@started_at, ended_at=@ended_at, note=@note WHERE id=@id`),
+  deleteBreak: db.prepare(`DELETE FROM breaks WHERE id=?`),
   // total break ms for a day: closed spans + any still-open span capped at @now
   breakMsByDay: db.prepare(`
     SELECT COALESCE(SUM(CASE WHEN ended_at IS NOT NULL THEN ended_at-started_at
@@ -282,7 +297,8 @@ function listBreaks(day) {
   return S.breaksByDay.all(day);
 }
 
-// whole break state for a day: total minutes, the open break's start (or null), raw spans
+// whole break state for a day: total minutes, the open break's start + its title
+// (or null), raw spans (each carries its own title in `note`).
 function getBreakState(day) {
   const running = S.runningBreak.get(day);
   const ms = S.breakMsByDay.get({ day, now: now() }).ms;
@@ -290,21 +306,23 @@ function getBreakState(day) {
     day,
     total_minutes: ms / 60000,
     running_since: running ? running.started_at : null,
+    running_note: running ? (running.note || "") : "",
     breaks: listBreaks(day),
   };
 }
 
-// Start a break. Focus mode: any running task auto-holds so productive time
-// doesn't accrue while you're away. A second Start Break while already on break
-// is a no-op (keeps the original span).
-const startBreak = db.transaction((day) => {
+// Start a break with an optional title (e.g. "Lunch", "Tea", "Breakfast").
+// Focus mode: any running task auto-holds so productive time doesn't accrue while
+// you're away. A second Start Break while already on break is a no-op (keeps the
+// original span and its title).
+const startBreak = db.transaction((day, note) => {
   const already = S.runningBreak.get(day);
   if (!already) {
     for (const r of S.runningTasks.all()) {
       S.closeOpen.run(now(), r.task_id);
       S.setWorkState.run({ id: r.task_id, work_state: "hold" });
     }
-    S.openBreak.run(day, now());
+    S.openBreak.run(day, now(), (note || "").trim());
   }
   return getBreakState(day);
 });
@@ -313,6 +331,30 @@ const startBreak = db.transaction((day) => {
 function endBreak(day) {
   S.closeOpenBreak.run(now(), day);
   return getBreakState(day);
+}
+
+// Edit one break: any of title (note), start, or end. Omitted fields keep their
+// current value; pass ended_at:null to reopen a break (mark it still running).
+// end is clamped to never fall before start. Returns the day's whole break state.
+function updateBreak(id, opts) {
+  const cur = S.getBreak.get(id);
+  if (!cur) return null;
+  const note = opts.note != null ? String(opts.note).trim() : cur.note;
+  const started_at = opts.started_at != null ? Math.round(opts.started_at) : cur.started_at;
+  let ended_at = opts.ended_at !== undefined
+    ? (opts.ended_at != null ? Math.round(opts.ended_at) : null)
+    : cur.ended_at;
+  if (ended_at != null && ended_at < started_at) ended_at = started_at;
+  S.updateBreak.run({ id, started_at, ended_at, note });
+  return getBreakState(cur.day);
+}
+
+// Delete one break. Returns the day's whole break state (or null if not found).
+function deleteBreak(id) {
+  const cur = S.getBreak.get(id);
+  if (!cur) return null;
+  S.deleteBreak.run(id);
+  return getBreakState(cur.day);
 }
 
 function createTask(t) {
@@ -607,6 +649,6 @@ module.exports = {
   listTasks, listAllTasks, listSessions, chainStats, createTask, updateTask, deleteTask, setTaskTime,
   taskDetails, startTimer, holdTimer, stopTimer, completeTask, reopenTask,
   reorder, carryForward, getMeta, saveMeta, signIn, signOut, setSignTimes, autoSignOutStale,
-  listBreaks, getBreakState, startBreak, endBreak,
+  listBreaks, getBreakState, startBreak, endBreak, updateBreak, deleteBreak,
   listNotes, createNote, updateNote, deleteNote,
 };

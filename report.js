@@ -177,7 +177,9 @@ function buildReport(day, tasks, meta, sessions, breaks) {
     breakSpans.forEach((b, i) => {
       const end = b.ended_at != null ? hhmm(b.ended_at) : "…";
       const durMs = (b.ended_at != null ? b.ended_at : Date.now()) - b.started_at;
-      L.push(`  ${i + 1}. ${hhmm(b.started_at)} → ${end}  (${fmtHM(durMs / 60000)}Hours)`);
+      const title = (b.note || "").trim();
+      const label = title ? `${title} — ` : "";
+      L.push(`  ${i + 1}. ${label}${hhmm(b.started_at)} → ${end}  (${fmtHM(durMs / 60000)}Hours)`);
     });
     L.push(`   Total break: ${fmtColon(breakMin)}Hours`);
     L.push("");

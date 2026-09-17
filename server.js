@@ -5,7 +5,7 @@ const dbx = require("./db");
 const { buildReport, computeTotals } = require("./report");
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3003;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "public")));
@@ -206,12 +206,24 @@ app.get("/api/breaks", (req, res) => {
 app.post("/api/break/start", (req, res) => {
   const day = req.query.date;
   if (!day) return res.status(400).json({ error: "date required" });
-  res.json(dbx.startBreak(day));
+  const note = (req.body && req.body.note) || req.query.note || "";
+  res.json(dbx.startBreak(day, note));
 });
 app.post("/api/break/end", (req, res) => {
   const day = req.query.date;
   if (!day) return res.status(400).json({ error: "date required" });
   res.json(dbx.endBreak(day));
+});
+// edit one break: { note, started_at, ended_at } (epoch ms; ended_at null = reopen)
+app.put("/api/break/:id", (req, res) => {
+  const out = dbx.updateBreak(Number(req.params.id), req.body || {});
+  if (!out) return res.status(404).json({ error: "not found" });
+  res.json(out);
+});
+app.delete("/api/break/:id", (req, res) => {
+  const out = dbx.deleteBreak(Number(req.params.id));
+  if (!out) return res.status(404).json({ error: "not found" });
+  res.json(out);
 });
 
 /* ---------------- sticky notes (global pinboard) ---------------- */
